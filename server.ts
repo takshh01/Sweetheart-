@@ -6,9 +6,9 @@ import { createServer as createViteServer } from 'vite';
 const app = express();
 const PORT = 3000;
 
-// High body limit for base64 photo and video uploads
-app.use(express.json({ limit: '60mb' }));
-app.use(express.urlencoded({ extended: true, limit: '60mb' }));
+// High body limit for base64 photo and video uploads (up to 120MB)
+app.use(express.json({ limit: '120mb' }));
+app.use(express.urlencoded({ extended: true, limit: '120mb' }));
 
 // Ensure data directory exists for persistence
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -20,7 +20,32 @@ if (!fs.existsSync(DATA_DIR)) {
   }
 }
 
+// Dedicated directory for uploaded photos so proposal_db.json stays small & safe
+const PHOTOS_DIR = path.join(DATA_DIR, 'photos');
+if (!fs.existsSync(PHOTOS_DIR)) {
+  try {
+    fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+  } catch (err) {
+    console.error('Failed to create photos directory:', err);
+  }
+}
+
 const STORAGE_FILE = path.join(DATA_DIR, 'proposal_db.json');
+const STORAGE_BACKUP_FILE = path.join(DATA_DIR, 'proposal_db.json.bak');
+
+/**
+ * Atomically writes data to a file by writing to a temporary file first,
+ * then renaming. This prevents corrupted or zero-byte files if process is interrupted.
+ */
+function safeWriteFileSync(filePath: string, data: string | Buffer): void {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  fs.writeFileSync(tmpPath, data);
+  fs.renameSync(tmpPath, filePath);
+}
 
 interface ProposalSession {
   id: string;
@@ -72,9 +97,29 @@ interface DBStructure {
 }
 
 function loadDB(): DBStructure {
-  try {
-    if (fs.existsSync(STORAGE_FILE)) {
-      const content = fs.readFileSync(STORAGE_FILE, 'utf-8');
+  let content: string | null = null;
+
+  // 1. Try reading primary storage file
+  if (fs.existsSync(STORAGE_FILE)) {
+    try {
+      content = fs.readFileSync(STORAGE_FILE, 'utf-8');
+    } catch (e) {
+      console.warn('Could not read primary storage file, checking backup:', e);
+    }
+  }
+
+  // 2. If primary failed or empty, try reading automatic backup
+  if (!content && fs.existsSync(STORAGE_BACKUP_FILE)) {
+    try {
+      content = fs.readFileSync(STORAGE_BACKUP_FILE, 'utf-8');
+      console.log('Restored proposal_db from backup file successfully.');
+    } catch (e) {
+      console.error('Failed to read backup storage:', e);
+    }
+  }
+
+  if (content) {
+    try {
       const parsed = JSON.parse(content);
       if (!Array.isArray(parsed.photos)) {
         parsed.photos = [parsed.photo?.custom_url || null, null, null, null, null, null];
@@ -82,6 +127,24 @@ function loadDB(): DBStructure {
       while (parsed.photos.length < 6) {
         parsed.photos.push(null);
       }
+
+      // Safe auto-migration: migrate any large inline base64 images into disk files
+      for (let i = 0; i < 6; i++) {
+        const photoVal = parsed.photos[i];
+        if (typeof photoVal === 'string' && photoVal.startsWith('data:image/')) {
+          try {
+            const matches = photoVal.match(/^data:image\/([a-zA-Z0-9.+]+);base64,(.+)$/);
+            const base64Str = matches && matches[2] ? matches[2] : photoVal.replace(/^data:[^;]+;base64,/, '');
+            const buffer = Buffer.from(base64Str, 'base64');
+            const photoDiskPath = path.join(PHOTOS_DIR, `photo_${i}.jpg`);
+            safeWriteFileSync(photoDiskPath, buffer);
+            parsed.photos[i] = `/api/photos/file/${i}?t=${Date.now()}`;
+          } catch (mErr) {
+            console.error(`Migration error for photo ${i}:`, mErr);
+          }
+        }
+      }
+
       if (!parsed.video) {
         parsed.video = {
           custom_url: null,
@@ -98,9 +161,9 @@ function loadDB(): DBStructure {
         };
       }
       return parsed;
+    } catch (e) {
+      console.error('Error parsing storage JSON:', e);
     }
-  } catch (e) {
-    console.error('Error reading storage, resetting:', e);
   }
 
   const initialDB: DBStructure = {
@@ -127,9 +190,16 @@ function loadDB(): DBStructure {
   return initialDB;
 }
 
-function saveDB(db: DBStructure) {
+function saveDB(data: DBStructure) {
   try {
-    fs.writeFileSync(STORAGE_FILE, JSON.stringify(db, null, 2), 'utf-8');
+    const serialized = JSON.stringify(data, null, 2);
+    // Keep an automatic backup of the last known-good state
+    if (fs.existsSync(STORAGE_FILE)) {
+      try {
+        fs.copyFileSync(STORAGE_FILE, STORAGE_BACKUP_FILE);
+      } catch {}
+    }
+    safeWriteFileSync(STORAGE_FILE, serialized);
   } catch (e) {
     console.error('Error saving storage:', e);
   }
@@ -402,6 +472,62 @@ ${session.no_attempts}
   }
 });
 
+// Helper to save a photo to disk securely as a real image file
+function savePhotoSlotToDisk(index: number, photoUrlOrData: string): string {
+  if (typeof photoUrlOrData === 'string' && photoUrlOrData.startsWith('data:image/')) {
+    try {
+      const matches = photoUrlOrData.match(/^data:image\/([a-zA-Z0-9.+]+);base64,(.+)$/);
+      const base64Str = matches && matches[2] ? matches[2] : photoUrlOrData.replace(/^data:[^;]+;base64,/, '');
+      const buffer = Buffer.from(base64Str, 'base64');
+      const photoDiskPath = path.join(PHOTOS_DIR, `photo_${index}.jpg`);
+      safeWriteFileSync(photoDiskPath, buffer);
+      return `/api/photos/file/${index}?t=${Date.now()}`;
+    } catch (err) {
+      console.error(`Error writing photo ${index} to disk:`, err);
+      return photoUrlOrData; // fallback
+    }
+  }
+  return photoUrlOrData.trim();
+}
+
+function removePhotoSlotFile(index: number) {
+  const photoDiskPath = path.join(PHOTOS_DIR, `photo_${index}.jpg`);
+  if (fs.existsSync(photoDiskPath)) {
+    try {
+      fs.unlinkSync(photoDiskPath);
+    } catch (e) {
+      console.error(`Error deleting photo file for slot ${index}:`, e);
+    }
+  }
+}
+
+// Stream photo file directly from disk with proper caching
+app.get('/api/photos/file/:index', (req, res) => {
+  const index = parseInt(req.params.index, 10);
+  if (isNaN(index) || index < 0 || index >= 6) {
+    return res.status(400).send('Invalid photo index');
+  }
+
+  const photoDiskPath = path.join(PHOTOS_DIR, `photo_${index}.jpg`);
+  if (!fs.existsSync(photoDiskPath)) {
+    return res.status(404).send('Photo not found');
+  }
+
+  try {
+    const stat = fs.statSync(photoDiskPath);
+    res.writeHead(200, {
+      'Content-Type': 'image/jpeg',
+      'Content-Length': stat.size,
+      'Cache-Control': 'public, max-age=86400, must-revalidate',
+      'Last-Modified': stat.mtime.toUTCString(),
+    });
+    fs.createReadStream(photoDiskPath).pipe(res);
+  } catch (err) {
+    console.error('Error serving photo file:', err);
+    res.status(500).send('Error reading photo');
+  }
+});
+
 // 3. Photo endpoints (6 photos support)
 app.get('/api/photos', (req, res) => {
   res.json({
@@ -418,13 +544,19 @@ app.post('/api/photos', (req, res) => {
     }
 
     if (reset_all) {
+      for (let i = 0; i < 6; i++) {
+        removePhotoSlotFile(i);
+      }
       db.photos = [null, null, null, null, null, null];
       db.photo = { custom_url: null, updated_at: new Date().toISOString() };
     } else if (typeof index === 'number' && index >= 0 && index < 6) {
       if (reset) {
+        removePhotoSlotFile(index);
         db.photos[index] = null;
       } else if (photo_url) {
-        db.photos[index] = photo_url;
+        // Save to real disk file atomically
+        const persistentUrl = savePhotoSlotToDisk(index, photo_url);
+        db.photos[index] = persistentUrl;
       }
       if (index === 0) {
         db.photo = { custom_url: db.photos[0], updated_at: new Date().toISOString() };
@@ -458,17 +590,19 @@ app.post('/api/photo', (req, res) => {
       db.photos = [null, null, null, null, null, null];
     }
     if (reset) {
+      removePhotoSlotFile(0);
       db.photo = {
         custom_url: null,
         updated_at: new Date().toISOString(),
       };
       db.photos[0] = null;
     } else if (photo_url) {
+      const persistentUrl = savePhotoSlotToDisk(0, photo_url);
       db.photo = {
-        custom_url: photo_url,
+        custom_url: persistentUrl,
         updated_at: new Date().toISOString(),
       };
-      db.photos[0] = photo_url;
+      db.photos[0] = persistentUrl;
     }
     saveDB(db);
     res.json({
@@ -585,7 +719,7 @@ app.post('/api/video', (req, res) => {
       } else {
         buffer = Buffer.from(video_data.replace(/^data:[^;]+;base64,/, ''), 'base64');
       }
-      fs.writeFileSync(videoFilePath, buffer);
+      safeWriteFileSync(videoFilePath, buffer);
       db.video = {
         custom_url: '/api/video/file',
         type: 'file',
@@ -731,7 +865,7 @@ app.post('/api/music', (req, res) => {
       } else {
         buffer = Buffer.from(music_data.replace(/^data:[^;]+;base64,/, ''), 'base64');
       }
-      fs.writeFileSync(musicFilePath, buffer);
+      safeWriteFileSync(musicFilePath, buffer);
       db.music = {
         custom_url: '/api/music/file',
         type: 'file',

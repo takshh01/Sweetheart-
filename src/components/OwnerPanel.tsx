@@ -132,13 +132,13 @@ export function OwnerPanel({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 50 * 1024 * 1024) {
-      setStatusMsg('Please choose a video under 50MB for best performance.');
+    if (file.size > 90 * 1024 * 1024) {
+      setStatusMsg('Please choose a video under 90MB for optimal streaming.');
       return;
     }
 
     setIsVideoUploading(true);
-    setStatusMsg(`Uploading "${file.name}"... please wait.`);
+    setStatusMsg(`Uploading "${file.name}" securely to server storage... please do not close this window.`);
 
     const reader = new FileReader();
     reader.onload = async event => {
@@ -153,15 +153,15 @@ export function OwnerPanel({
       if (res.video_url) {
         setVideoUrl(res.video_url);
         setHasCustomVideo(true);
-        setStatusMsg('Video uploaded successfully! It will play as the final surprise.');
+        setStatusMsg('✅ Video safely uploaded and stored on server disk! Ready for the surprise reveal.');
         if (onVideoUpdated) onVideoUpdated(res.video_url, videoTitle, videoCaption);
       } else {
-        setStatusMsg('Video upload failed. Try an external video URL instead.');
+        setStatusMsg('Video upload failed. Check file format or try an external video URL instead.');
       }
     };
     reader.onerror = () => {
       setIsVideoUploading(false);
-      setStatusMsg('Error reading video file.');
+      setStatusMsg('Error reading video file from your device.');
     };
     reader.readAsDataURL(file);
   };
@@ -203,13 +203,13 @@ export function OwnerPanel({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 20 * 1024 * 1024) {
-      setStatusMsg('Please choose an audio file under 20MB for fast buffering.');
+    if (file.size > 35 * 1024 * 1024) {
+      setStatusMsg('Please choose an audio file under 35MB for fast loading.');
       return;
     }
 
     setIsMusicUploading(true);
-    setStatusMsg(`Uploading audio "${file.name}"... please wait.`);
+    setStatusMsg(`Uploading audio "${file.name}" securely to server storage... please wait.`);
 
     const reader = new FileReader();
     reader.onload = async event => {
@@ -223,15 +223,15 @@ export function OwnerPanel({
       if (res.music_url) {
         setMusicUrl(res.music_url);
         setHasCustomMusic(true);
-        setStatusMsg('Background music uploaded & saved! It will play across Kimmi\'s journey.');
+        setStatusMsg('✅ Background music safely saved on server disk! It will play across Kimmi\'s journey.');
         if (onMusicUpdated) onMusicUpdated(res.music_url, musicTitle);
       } else {
-        setStatusMsg('Audio upload failed. Try an external audio URL instead.');
+        setStatusMsg('Audio upload failed. Check file format or try an external audio URL.');
       }
     };
     reader.onerror = () => {
       setIsMusicUploading(false);
-      setStatusMsg('Error reading audio file.');
+      setStatusMsg('Error reading audio file from your device.');
     };
     reader.readAsDataURL(file);
   };
@@ -287,25 +287,25 @@ export function OwnerPanel({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Check size limit (< 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      setStatusMsg('Please choose an image under 10MB');
+    // Support high resolution camera photos up to 30MB (they will be optimized safely)
+    if (file.size > 30 * 1024 * 1024) {
+      setStatusMsg('Please choose an image file under 30MB');
       return;
     }
 
     setIsUploading(true);
-    setStatusMsg(`Optimizing and uploading photo for Slot #${selectedSlot + 1}...`);
+    setStatusMsg(`Optimizing & securing photo for Slot #${selectedSlot + 1}...`);
 
     const reader = new FileReader();
     reader.onload = async event => {
       const result = event.target?.result as string;
 
-      // Optional downscale using offscreen canvas to optimize storage
+      // Safe offscreen canvas downscale to optimize disk storage & network speed
       const img = new Image();
       img.onload = async () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1200;
-        const MAX_HEIGHT = 1200;
+        const MAX_WIDTH = 1600;
+        const MAX_HEIGHT = 1600;
         let width = img.width;
         let height = img.height;
 
@@ -321,13 +321,19 @@ export function OwnerPanel({
           }
         }
 
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = Math.round(width);
+        canvas.height = Math.round(height);
         const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
 
         const optimizedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
         setPhotoPreview(optimizedDataUrl);
+
+        setStatusMsg(`Saving photo #${selectedSlot + 1} securely to server disk...`);
 
         // Save to backend at current slot index
         const updatedPhotos = await savePhotoAtIndex(selectedSlot, optimizedDataUrl);
@@ -335,10 +341,18 @@ export function OwnerPanel({
         if (selectedSlot === 0 && onPhotoUpdated) onPhotoUpdated(updatedPhotos[0]);
 
         setIsUploading(false);
-        setStatusMsg(`Photo #${selectedSlot + 1} successfully updated!`);
+        setStatusMsg(`✅ Photo #${selectedSlot + 1} safely saved on server disk!`);
         loadData();
       };
+      img.onerror = () => {
+        setIsUploading(false);
+        setStatusMsg('Could not decode image file. Please try another photo format.');
+      };
       img.src = result;
+    };
+    reader.onerror = () => {
+      setIsUploading(false);
+      setStatusMsg('Error reading image file from your device.');
     };
     reader.readAsDataURL(file);
   };
@@ -442,6 +456,14 @@ export function OwnerPanel({
                 <X className="w-5 h-5" />
               </button>
             </div>
+          </div>
+
+          {/* Safe Storage Indicator */}
+          <div className="bg-[#FFF8F9] border-b border-[#F3D8DC] px-5 py-1.5 flex items-center justify-between text-[11px] text-[#8C1D30]">
+            <span className="flex items-center gap-1.5 font-medium">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+              <span>Safe Storage Active: uploads persist securely on server disk</span>
+            </span>
           </div>
 
           {/* Navigation Tabs */}
