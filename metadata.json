@@ -1,0 +1,6 @@
+{
+  "name": "Forever Partner — Kimmi's Proposal",
+  "description": "A private, luxury romantic proposal experience crafted for Kimmi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
