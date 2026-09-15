@@ -27,7 +27,7 @@ import { VideoReveal } from './components/VideoReveal';
 import { BackgroundMusic } from './components/BackgroundMusic';
 import { OwnerPanel } from './components/OwnerPanel';
 import { OwnerPasswordModal } from './components/OwnerPasswordModal';
-import { fetchVideo, fetchMusic } from './services/api';
+import { fetchVideo, fetchMusic, savePhotoAtIndex } from './services/api';
 
 export default function App() {
   const [sessionId] = useState<string>(() => getOrCreateSessionId());
@@ -42,16 +42,70 @@ export default function App() {
     }
   });
 
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [photos, setPhotos] = useState<(string | null)[]>([null, null, null, null, null, null]);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(() => {
+    try {
+      const cached = localStorage.getItem('cached_proposal_photos');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed[0]) return parsed[0];
+      }
+    } catch {}
+    return null;
+  });
+  const [photos, setPhotos] = useState<(string | null)[]>(() => {
+    try {
+      const cached = localStorage.getItem('cached_proposal_photos');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length === 6) return parsed;
+      }
+    } catch {}
+    return [null, null, null, null, null, null];
+  });
 
   // Video State
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [videoTitle, setVideoTitle] = useState<string>('Our Story in Motion ❤️');
-  const [videoCaption, setVideoCaption] = useState<string>('Every second with you is a moment I want to remember forever.');
+  const [videoUrl, setVideoUrl] = useState<string | null>(() => {
+    try {
+      const cached = localStorage.getItem('cached_proposal_video');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.video_url) return parsed.video_url;
+      }
+    } catch {}
+    return null;
+  });
+  const [videoTitle, setVideoTitle] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem('cached_proposal_video');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.video?.title) return parsed.video.title;
+      }
+    } catch {}
+    return 'Our Story in Motion ❤️';
+  });
+  const [videoCaption, setVideoCaption] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem('cached_proposal_video');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.video?.caption) return parsed.video.caption;
+      }
+    } catch {}
+    return 'Every second with you is a moment I want to remember forever.';
+  });
 
   // Background Music State
-  const [musicUrl, setMusicUrl] = useState<string>('/default_music.mp3');
+  const [musicUrl, setMusicUrl] = useState<string>(() => {
+    try {
+      const cached = localStorage.getItem('cached_proposal_music');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.music_url) return parsed.music_url;
+      }
+    } catch {}
+    return '/default_music.mp3';
+  });
 
   // Viewed states for envelopes
   const [viewedCards, setViewedCards] = useState({
@@ -68,14 +122,31 @@ export default function App() {
   // Initialize session, photos, video & music from backend
   useEffect(() => {
     async function init() {
-      // Fetch 6 photos
+      // Fetch 6 photos from persistent server storage
       const photoList = await fetchPhotos();
-      if (photoList && photoList.length > 0) {
+      const hasServerPhotos = photoList && photoList.some(p => Boolean(p));
+
+      if (hasServerPhotos) {
         setPhotos(photoList);
         if (photoList[0]) setPhotoUrl(photoList[0]);
       } else {
-        const photo = await fetchPhoto();
-        if (photo) setPhotoUrl(photo);
+        // Safe auto-sync: if server is fresh but owner has cached photos in browser, restore them
+        try {
+          const cached = localStorage.getItem('cached_proposal_photos');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.some(p => Boolean(p))) {
+              setPhotos(parsed);
+              if (parsed[0]) setPhotoUrl(parsed[0]);
+              // Push to server to persist permanently on disk
+              for (let i = 0; i < 6; i++) {
+                if (parsed[i] && !parsed[i].startsWith('/api/photos/file/')) {
+                  await savePhotoAtIndex(i, parsed[i]);
+                }
+              }
+            }
+          }
+        } catch {}
       }
 
       // Fetch video

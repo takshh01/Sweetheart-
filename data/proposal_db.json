@@ -44,15 +44,45 @@
       "created_at": "2026-09-15T11:27:38.235Z",
       "updated_at": "2026-09-15T11:27:38.235Z",
       "completion_time": null
+    },
+    "kimmi_1789483728180_jaikv": {
+      "id": "prop_1789483728281",
+      "session_id": "kimmi_1789483728180_jaikv",
+      "proposal_started": true,
+      "memories_viewed": false,
+      "why_love_viewed": false,
+      "letter_viewed": false,
+      "game_completed": false,
+      "no_attempts": 0,
+      "final_answer": "Not answered",
+      "selected_date": null,
+      "created_at": "2026-09-15T14:48:48.281Z",
+      "updated_at": "2026-09-15T14:48:48.281Z",
+      "completion_time": null
+    },
+    "test-session": {
+      "id": "prop_1789484054716",
+      "session_id": "test-session",
+      "proposal_started": true,
+      "memories_viewed": false,
+      "why_love_viewed": false,
+      "letter_viewed": false,
+      "game_completed": false,
+      "no_attempts": 0,
+      "final_answer": "Not answered",
+      "selected_date": null,
+      "created_at": "2026-09-15T14:54:14.716Z",
+      "updated_at": "2026-09-15T14:54:14.716Z",
+      "completion_time": null
     }
   },
   "photo": {
-    "custom_url": "/api/photos/file/0?t=1789471921551",
-    "updated_at": "2026-09-15T11:32:01.551Z"
+    "custom_url": "/api/photos/file/0?t=1789484049561",
+    "updated_at": "2026-09-15T14:54:09.561Z"
   },
   "email_logs": [],
   "photos": [
-    "/api/photos/file/0?t=1789471921551",
+    "/api/photos/file/0?t=1789484049561",
     null,
     null,
     null,

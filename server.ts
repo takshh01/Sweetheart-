@@ -32,6 +32,15 @@ if (!fs.existsSync(PHOTOS_DIR)) {
 
 const STORAGE_FILE = path.join(DATA_DIR, 'proposal_db.json');
 const STORAGE_BACKUP_FILE = path.join(DATA_DIR, 'proposal_db.json.bak');
+const OWNER_PASSWORD = 'Taksh@28';
+
+/**
+ * Checks if a request comes from the authorized owner with valid password/token.
+ */
+function isOwnerAuthorized(req: express.Request): boolean {
+  const token = req.headers['x-owner-token'] || req.body?.owner_token || req.query?.owner_token;
+  return token === OWNER_PASSWORD;
+}
 
 /**
  * Atomically writes data to a file by writing to a temporary file first,
@@ -160,6 +169,12 @@ function loadDB(): DBStructure {
           updated_at: new Date().toISOString(),
         };
       }
+
+      // Ensure that if media files exist on disk, they are always restored even after fresh restart
+      const diskSynced = syncDiskAssetsWithDB(parsed);
+      if (diskSynced) {
+        saveDB(parsed);
+      }
       return parsed;
     } catch (e) {
       console.error('Error parsing storage JSON:', e);
@@ -186,8 +201,68 @@ function loadDB(): DBStructure {
     },
     email_logs: [],
   };
+  syncDiskAssetsWithDB(initialDB);
   saveDB(initialDB);
   return initialDB;
+}
+
+/**
+ * Guarantees that any photo, video, or music file stored on disk is permanently
+ * synced into the active database structure across any container restart or refresh.
+ */
+function syncDiskAssetsWithDB(targetDB: DBStructure): boolean {
+  let changed = false;
+
+  // 1. Sync Photos from disk
+  for (let i = 0; i < 6; i++) {
+    const photoDiskPath = path.join(PHOTOS_DIR, `photo_${i}.jpg`);
+    if (fs.existsSync(photoDiskPath)) {
+      if (!targetDB.photos[i]) {
+        targetDB.photos[i] = `/api/photos/file/${i}`;
+        changed = true;
+      }
+    }
+  }
+  if (targetDB.photos[0] && (!targetDB.photo || !targetDB.photo.custom_url)) {
+    targetDB.photo = {
+      custom_url: targetDB.photos[0],
+      updated_at: new Date().toISOString(),
+    };
+    changed = true;
+  }
+
+  // 2. Sync Video from disk
+  const videoFilePath = path.join(DATA_DIR, 'uploaded_video.mp4');
+  if (fs.existsSync(videoFilePath)) {
+    if (!targetDB.video || !targetDB.video.custom_url) {
+      targetDB.video = {
+        custom_url: '/api/video/file',
+        type: 'file',
+        file_name: targetDB.video?.file_name || 'our_video.mp4',
+        title: targetDB.video?.title || 'Our Story in Motion ❤️',
+        caption: targetDB.video?.caption || 'Every second with you is a moment I want to remember forever.',
+        updated_at: targetDB.video?.updated_at || new Date().toISOString(),
+      };
+      changed = true;
+    }
+  }
+
+  // 3. Sync Music from disk
+  const musicFilePath = path.join(DATA_DIR, 'uploaded_music.mp3');
+  if (fs.existsSync(musicFilePath)) {
+    if (!targetDB.music || !targetDB.music.custom_url) {
+      targetDB.music = {
+        custom_url: '/api/music/file',
+        type: 'file',
+        file_name: targetDB.music?.file_name || 'custom_music.mp3',
+        title: targetDB.music?.title || 'Our Romantic Song 🎵',
+        updated_at: targetDB.music?.updated_at || new Date().toISOString(),
+      };
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function saveDB(data: DBStructure) {
@@ -537,6 +612,12 @@ app.get('/api/photos', (req, res) => {
 });
 
 app.post('/api/photos', (req, res) => {
+  if (!isOwnerAuthorized(req)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Unauthorized: Only the verified owner can upload, modify, or delete photos.',
+    });
+  }
   try {
     const { index, photo_url, reset, reset_all } = req.body;
     if (!Array.isArray(db.photos)) {
@@ -584,6 +665,12 @@ app.get('/api/photo', (req, res) => {
 });
 
 app.post('/api/photo', (req, res) => {
+  if (!isOwnerAuthorized(req)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Unauthorized: Only the verified owner can modify photo settings.',
+    });
+  }
   try {
     const { photo_url, reset } = req.body;
     if (!Array.isArray(db.photos)) {
@@ -619,8 +706,8 @@ app.post('/api/photo', (req, res) => {
 // 4. Owner password verification
 app.post('/api/owner/verify-password', (req, res) => {
   const { password } = req.body;
-  if (password === 'Taksh@28') {
-    return res.json({ success: true, authorized: true });
+  if (password === OWNER_PASSWORD) {
+    return res.json({ success: true, authorized: true, token: OWNER_PASSWORD });
   }
   return res.status(401).json({ success: false, authorized: false, error: 'Incorrect password' });
 });
@@ -688,6 +775,12 @@ app.get('/api/video/file', (req, res) => {
 });
 
 app.post('/api/video', (req, res) => {
+  if (!isOwnerAuthorized(req)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Unauthorized: Only the verified owner can upload, modify, or delete video.',
+    });
+  }
   try {
     const { video_data, video_url, file_name, title, caption, reset } = req.body;
     const videoFilePath = path.join(DATA_DIR, 'uploaded_video.mp4');
@@ -830,6 +923,12 @@ app.get('/api/music/file', (req, res) => {
 });
 
 app.post('/api/music', (req, res) => {
+  if (!isOwnerAuthorized(req)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Unauthorized: Only the verified owner can upload, modify, or delete background music.',
+    });
+  }
   try {
     const { music_data, music_url, file_name, title, reset } = req.body;
     const musicFilePath = path.join(DATA_DIR, 'uploaded_music.mp3');
